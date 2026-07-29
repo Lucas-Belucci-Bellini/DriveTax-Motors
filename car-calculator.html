@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Tax Calculator - DriveTax Motors</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <header>
+        <h1>Car Tax Calculator</h1>
+        <nav class="page-nav">
+            <a href="index.html">Home</a>
+            <a href="about.html">About</a>
+        </nav>
+    </header>
+
+    <main>
+        <section class="calculator-card">
+            <h2>Enter your car details</h2>
+            <form method="post" action="calculate">
+                <label for="price">Car base price (before tax)</label>
+                <input type="number" id="price" name="price" step="0.01" min="0" value="25000" required>
+
+                <label for="insurance">Insurance value</label>
+                <input type="number" id="insurance" name="insurance" step="0.01" min="0" value="1200" required>
+
+                <label for="supplierFee">Supplier fee</label>
+                <input type="number" id="supplierFee" name="supplierFee" step="0.01" min="0" value="800" required>
+
+                <label for="taxRate">Tax rate (%)</label>
+                <input type="number" id="taxRate" name="taxRate" step="0.01" min="0" value="18" required>
+
+                <button type="submit" class="button">Calculate</button>
+            </form>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 DriveTax Motors</p>
+    </footer>
+</body>
+</html>
