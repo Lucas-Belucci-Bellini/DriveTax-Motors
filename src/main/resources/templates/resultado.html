@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resultado - DriveTax Motors</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="page-shell">
+        <header class="hero small">
+            <div>
+                <p class="eyebrow">DriveTax Motors</p>
+                <h1>Resultado do cálculo</h1>
+                <p class="lead">Veja o valor do imposto e o total a pagar pelo veículo.</p>
+            </div>
+        </header>
+
+        <main class="content-card">
+            <section class="result-grid">
+                <div>
+                    <span>Valor base</span>
+                    <strong th:text="${valorBase}">0,00</strong>
+                </div>
+                <div>
+                    <span>Taxa de imposto</span>
+                    <strong th:text="${taxRate} + '%'">25%</strong>
+                </div>
+                <div>
+                    <span>Valor do imposto</span>
+                    <strong th:text="${imposto}">0,00</strong>
+                </div>
+                <div>
+                    <span>Total a pagar</span>
+                    <strong th:text="${total}">0,00</strong>
+                </div>
+            </section>
+            <a class="back-link" th:href="@{/}">Voltar para o início</a>
+        </main>
+    </div>
+</body>
+</html>
