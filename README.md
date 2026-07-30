@@ -431,3 +431,216 @@ Quando o Motor de Auditoria (as 240 calculadoras que verificam os dados) aprova 
 O Redis guarda essa informação com uma chave simples, tipo: `resultado:vw_polo_highline_2024`.
 Quando o cliente clicar no aplicativo para ver o carro, o sistema nem olha para o PostgreSQL — ele apenas "pesca" o JSON pronto no Redis instantaneamente.
 
+O uso de um **Message Broker** (como RabbitMQ ou Kafka) é o coração de qualquer pipeline de dados profissional. Sem ele, se seus bots enviarem 5.000 preços de carros ao mesmo tempo, seus servidores de cálculo vão engasgar e o banco de dados pode cair (o famoso *gargalo*).
+
+A fila atua como um **amortecedor (buffer)**. Os bots "despejam" os dados na fila na velocidade máxima deles. Do outro lado, as suas calculadoras "bebem" esses dados da fila no próprio ritmo, processam a matemática e salvam no banco de dados.
+
+Para o caso do **DriveTax-Motors**, onde você tem tarefas específicas (processar cálculo X, validar dado Y), o **RabbitMQ** é a escolha ideal. Ele é mais simples de configurar que o Kafka e perfeito para roteamento de tarefas.
+
+## A Arquitetura de Filas do DriveTax-Motors
+
+Aqui está como o fluxo dos dados acontece em tempo real:
+
+---
+
+## Como programar isso em Python
+
+Para conectar seus scripts, usamos a biblioteca `pika`, que é o padrão do Python para RabbitMQ.
+
+### 1. O Bot (O "Publicador" / Producer)
+
+O bot vai fazer o trabalho dele de acessar o site, extrair o preço e, em vez de tentar salvar no banco direto, ele envia a "carta" para o RabbitMQ e vai embora.
+
+```python
+import pika
+import json
+
+def enviar_para_fila(dados_carro):
+    # Conecta no servidor do RabbitMQ
+    conexao = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+    canal = conexao.channel()
+
+    # Cria a fila (se ela não existir, ele cria)
+    canal.queue_declare(queue='fila_dados_brutos')
+
+    # Transforma o dicionário Python em texto (JSON) para enviar
+    mensagem = json.dumps(dados_carro)
+
+    # Publica a mensagem na fila
+    canal.basic_publish(
+        exchange='',
+        routing_key='fila_dados_brutos',
+        body=mensagem
+    )
+    
+    print(f"✅ Enviado para a fila: {dados_carro['modelo']}")
+    conexao.close()
+
+# Simulação do Bot
+meu_dado = {"modelo": "VW Polo", "preco_tabela": 120000}
+enviar_para_fila(meu_dado)
+
+```
+
+### 2. A Calculadora (O "Consumidor" / Consumer)
+
+A calculadora fica rodando 24 horas por dia em segundo plano, apenas escutando a fila. Assim que um dado cai lá, ela puxa, calcula e salva no banco. Se você precisar de mais velocidade, basta rodar 10 cópias desse mesmo arquivo Python (isso é a sua ideia inicial de ter dezenas de calculadoras rodando juntas).
+
+```python
+import pika
+import json
+
+def ao_receber_mensagem(ch, method, properties, body):
+    # Recebe a mensagem e converte de volta para dicionário
+    dados = json.loads(body)
+    print(f"📥 Recebido da fila: {dados['modelo']}. Iniciando cálculo...")
+    
+    # -> AQUI VOCÊ RODA A SUA CLASSE CalculadoraDesoneracao <-
+    
+    # Se o cálculo der certo, você "avisa" o RabbitMQ para apagar a mensagem da fila
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+    print("💾 Cálculo concluído e salvo no banco. Mensagem apagada da fila.\n")
+
+def escutar_fila():
+    conexao = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+    canal = conexao.channel()
+
+    canal.queue_declare(queue='fila_dados_brutos')
+
+    # Avisa ao RabbitMQ que essa função (ao_receber_mensagem) vai processar os dados
+    canal.basic_consume(
+        queue='fila_dados_brutos',
+        on_message_callback=ao_receber_mensagem,
+        auto_ack=False # MUITO IMPORTANTE: Garante que a mensagem só seja apagada se o cálculo não der erro
+    )
+
+    print("🎧 Aguardando dados dos bots... Para sair pressione CTRL+C")
+    canal.start_consuming()
+
+# Inicia a escuta
+escutar_fila()
+
+```
+
+> **A grande sacada (auto_ack=False):** Se a sua calculadora estiver processando o "VW Polo" e o servidor cair do nada, a conta não foi finalizada. Como o RabbitMQ não recebeu o `basic_ack`, ele percebe a falha e devolve a mensagem do "VW Polo" para o início da fila. Quando o servidor voltar, a calculadora tenta de novo. **Você não perde nenhum dado.**
+
+O **Docker** é a ferramenta definitiva para resolver aquele velho problema: *"na minha máquina funciona, mas no servidor não"*. Ele empacota o seu código, o banco de dados e as filas de mensagens em "caixas isoladas" chamadas **Contêineres**.
+
+Para rodar todo o ecossistema do **DriveTax-Motors** ao mesmo tempo, nós usamos o **Docker Compose**. Ele é um arquivo de texto que age como um "maestro", dizendo quem deve ligar primeiro, quais são as senhas e como os contêineres conversam entre si.
+
+Aqui está o passo a passo para "conteinerizar" a sua infraestrutura.
+
+### Passo 1: Criar o arquivo `docker-compose.yml`
+
+Na pasta raiz do seu repositório no GitHub, você vai criar um arquivo chamado `docker-compose.yml`. Ele vai conter a planta baixa do seu sistema:
+
+```yaml
+version: '3.8'
+
+services:
+  # 1. O Banco de Dados Principal
+  postgres_db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: senha_segura_123
+      POSTGRES_DB: drivetax
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Garante que os dados não sumam se o servidor reiniciar
+
+  # 2. O Banco de Dados em Memória (Cache para as consultas do cliente)
+  redis_cache:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # 3. O Message Broker (Fila)
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"   # Porta onde os bots e as calculadoras se conectam
+      - "15672:15672" # Porta do painel visual no navegador (para você ver as filas)
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: senha_fila_123
+
+  # 4. As suas 480 Calculadoras (O Motor Central)
+  motor_calculo:
+    build: ./core_engine # Aponta para a pasta onde está o código Python das calculadoras
+    depends_on:
+      - rabbitmq
+      - postgres_db
+    environment:
+      - RABBITMQ_URL=amqp://admin:senha_fila_123@rabbitmq:5672/
+      - DATABASE_URL=postgresql://admin:senha_segura_123@postgres_db:5432/drivetax
+    deploy:
+      replicas: 3 # O Docker vai criar 3 cópias exatas da sua calculadora para dividir o trabalho!
+
+  # 5. O Bot de Ingestão (Scraper)
+  bot_scraper:
+    build: ./scrapers # Aponta para a pasta onde está o bot (Playwright)
+    depends_on:
+      - rabbitmq
+    environment:
+      - RABBITMQ_URL=amqp://admin:senha_fila_123@rabbitmq:5672/
+
+volumes:
+  postgres_data:
+
+```
+
+> **A Mágica da Rede Interna:** Repare que no `RABBITMQ_URL`, no lugar de colocar `localhost` ou um IP complexo, nós escrevemos `rabbitmq`. O Docker é inteligente o suficiente para criar uma rede interna onde os nomes dos serviços viram os endereços deles!
+
+### Passo 2: O Arquivo `Dockerfile` (A receita do Python)
+
+Dentro da pasta `/core_engine` (onde fica o código da sua calculadora) e da pasta `/scrapers`, você precisa colocar um arquivo chamado `Dockerfile` (sem extensão). Ele ensina o Docker a instalar o Python e rodar seu código.
+
+**Exemplo do `Dockerfile` para a Calculadora:**
+
+```dockerfile
+# 1. Pega um "computador" Linux limpo com Python já instalado
+FROM python:3.11-slim
+
+# 2. Define a pasta de trabalho dentro do contêiner
+WORKDIR /app
+
+# 3. Copia o arquivo de dependências (requirements.txt) e instala (ex: pika, psycopg2)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 4. Copia todo o código da calculadora para dentro do contêiner
+COPY . .
+
+# 5. O comando para ligar a calculadora quando o servidor iniciar
+CMD ["python", "main_calculadora.py"]
+
+```
+
+### Passo 3: Colocando tudo no ar!
+
+Seja no seu computador para testes, ou em um servidor na nuvem (como **AWS EC2**, **DigitalOcean Droplets**, ou **Google Cloud Compute Engine**), você só precisa clonar o seu GitHub, instalar o Docker e rodar um único comando no terminal:
+
+```bash
+docker-compose up -d
+
+```
+
+O comando `-d` significa *detached*. O Docker vai baixar os bancos de dados, preparar o RabbitMQ, construir o ambiente do Python, ligar os seus bots e iniciar 3 cópias do seu motor de cálculo. Tudo isso rodará silenciosamente no servidor.
+
+Se você acessar `http://IP_DO_SERVIDOR:15672` no seu navegador, você verá o painel de controle do RabbitMQ mostrando as filas trabalhando em tempo real!
+
+---
+
+### Como escalar de 3 para 240 calculadoras?
+
+Se o seu sistema crescer e os bots começarem a enviar 100 mil carros por dia, você não precisa reescrever uma linha de código sequer. Você apenas vai no terminal do servidor e digita:
+
+```bash
+docker-compose up -d --scale motor_calculo=240
+
+```
+
+E o Docker, em segundos, multiplica a sua calculadora para dar conta da fila. Essa é a arquitetura que empresas globais usam para escalar infinitamente.
+
