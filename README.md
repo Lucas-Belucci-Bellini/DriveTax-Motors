@@ -644,3 +644,469 @@ docker-compose up -d --scale motor_calculo=240
 
 E o Docker, em segundos, multiplica a sua calculadora para dar conta da fila. Essa é a arquitetura que empresas globais usam para escalar infinitamente.
 
+A construção da API é a cereja do bolo. É ela que vai servir como uma "ponte" entre o seu complexo sistema de retaguarda (bancos de dados, calculadoras, filas) e a tela do celular do seu cliente.
+
+O **FastAPI** é atualmente o framework mais moderno em Python para isso. Ele é assíncrono (não trava enquanto espera o banco de dados responder) e — o melhor de tudo — cria a documentação da sua API automaticamente.
+
+Aqui está o projeto de como construir essa API aplicando a **Regra do Cache** que definimos anteriormente: o sistema tenta ler do Redis primeiro (em milissegundos); se não achar, busca no PostgreSQL.
+
+### 1. Instalando as Bibliotecas
+
+No seu ambiente, você precisará do FastAPI, do servidor web (`uvicorn`) e do cliente do Redis:
+
+```bash
+pip install fastapi uvicorn redis
+
+```
+
+### 2. O Código da API (O Entregador de Dados)
+
+Crie um arquivo chamado `main_api.py` dentro da sua pasta `/api`. O código abaixo mostra a criação de um "Endpoint" (uma URL de acesso) que o seu aplicativo vai chamar quando o usuário clicar em um carro.
+
+```python
+from fastapi import FastAPI, HTTPException
+import redis.asyncio as redis
+import json
+
+# Inicializa a API
+app = FastAPI(
+    title="API DriveTax-Motors",
+    description="Motor de entrega de dados financeiros automotivos",
+    version="1.0.0"
+)
+
+# Conecta ao Redis (Se estiver no Docker, o endereço é "redis://redis_cache:6379")
+cache = redis.from_url("redis://localhost:6379", decode_responses=True)
+
+# Função simulada de busca no PostgreSQL (Aqui você usaria SQLAlchemy ou psycopg2)
+async def buscar_no_postgresql(modelo_id: str):
+    # Simula uma busca lenta no banco relacional
+    banco_de_dados = {
+        "vw_polo_highline_2024": {
+            "modelo": "VW Polo Highline 2024",
+            "preco_tabela": 120000.00,
+            "preco_fabrica": 85000.00,
+            "impostos": {"ipi": 9350.00, "icms": 11322.00},
+            "manutencao_3_anos": 4500.00,
+            "custo_por_km": 0.15
+        }
+    }
+    return banco_de_dados.get(modelo_id)
+
+# Cria a Rota de Busca do Carro
+@app.get("/veiculos/{modelo_id}")
+async def obter_raio_x_veiculo(modelo_id: str):
+    """
+    Retorna o Raio-X completo do veículo, priorizando o cache em memória (Redis).
+    """
+    # 1. TENTA NO CACHE (Redis) - Resposta em ~2 milissegundos
+    dado_em_cache = await cache.get(f"resultado:{modelo_id}")
+    
+    if dado_em_cache:
+        print("⚡ Retornando dados ultra-rápidos do Redis!")
+        return json.loads(dado_em_cache)
+
+    # 2. SE NÃO ESTIVER NO CACHE, BUSCA NO POSTGRESQL - Resposta em ~50-100 milissegundos
+    dados_banco = await buscar_no_postgresql(modelo_id)
+    
+    if not dados_banco:
+        raise HTTPException(status_code=404, detail="Veículo não encontrado em nossa base.")
+
+    # 3. SALVA NO REDIS PARA O PRÓXIMO USUÁRIO 
+    # (ex: expira em 86400 segundos = 24 horas)
+    print("🐢 Buscou no PostgreSQL e salvou no Cache para a próxima vez.")
+    await cache.set(f"resultado:{modelo_id}", json.dumps(dados_banco), ex=86400)
+
+    return dados_banco
+
+```
+
+### 3. Rodando e Testando a API
+
+Para rodar essa API, abra o terminal na pasta onde está o arquivo e digite:
+
+```bash
+uvicorn main_api:app --reload
+
+```
+
+A mágica do FastAPI acontece agora. Se você abrir o seu navegador e acessar `http://localhost:8000/docs`, você verá o **Swagger UI**. É uma interface visual gerada automaticamente onde você (ou o programador que fizer o seu aplicativo) pode clicar nos botões e testar a API sem precisar escrever nenhuma linha de código a mais.
+
+### 4. Como plugar isso no seu Docker?
+
+Lembra do arquivo `docker-compose.yml` que criamos no passo anterior? Para colocar a API rodando junto com os bots, bancos e calculadoras, basta adicionar este bloco no final dele:
+
+```yaml
+  # 6. A API FastAPI para o cliente final
+  api_frontend:
+    build: ./api # Pasta onde está o main_api.py e o Dockerfile da API
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres_db
+      - redis_cache
+    environment:
+      - REDIS_URL=redis://redis_cache:6379
+      - DATABASE_URL=postgresql://admin:senha_segura_123@postgres_db:5432/drivetax
+
+```
+
+Agora, o fluxo do **DriveTax-Motors** está 100% completo, da ponta a ponta:
+
+1. **Scraper** busca os dados na web e joga na Fila.
+2. **Calculadora** puxa da fila, faz as contas e salva no **PostgreSQL**.
+3. **API (FastAPI)** recebe o pedido do cliente, busca no banco, salva no **Redis** e entrega no celular do usuário.
+
+Essa é a evolução natural e o modelo onde o **DriveTax-Motors** deixa de ser apenas uma ferramenta de informação e passa a ser uma máquina de **transações financeiras**.
+
+Você está conectando a dor (descobrir que o carro precisa de manutenção) com a solução (vender a peça e entregar em casa ou agendar o serviço). No mercado, chamamos isso de modelo **O2O (Online-to-Offline) / Omnichannel**.
+
+Para que as pessoas comprem online e isso ajude a operação física da loja (sem virar uma bagunça de estoque), você precisará adicionar um **Motor de Vendas e Logística** àquela arquitetura que já desenhamos.
+
+Aqui está como esse ecossistema funciona na prática:
+
+1. **A Sugestão Inteligente (Cross-Selling):** Onde a mágica acontece.
+O usuário entra no app e o **Motor de Cálculo** avisa: *"Seu VW Polo chegou aos 40.000 km. É hora de trocar a correia dentada, óleo e filtros"*. Logo abaixo, a sua API já exibe o "Kit Revisão 40k" com um botão de **Comprar Agora**.
+
+
+2. **Checkout e Pagamento:**
+O cliente coloca o produto no carrinho e paga. O sistema usa uma API de pagamento (como **Mercado Pago** ou **Stripe**) que aceita Pix, Boleto ou Cartão de Crédito de forma segura, sem que você precise lidar com dados bancários sensíveis.
+
+
+3. **Roteamento Logístico:**
+O cliente escolhe como quer receber:
+**A) Receber em Casa:** A API de frete (como **MelhorEnvio**) calcula o valor dos Correios/Transportadora na hora.
+**B) Retire e Instale na Loja:** O sistema abre um calendário para o cliente agendar o box da oficina.
+
+
+4. **Sincronização com a Loja (A Manutenção da Operação):**
+Assim que o pagamento cai, o sistema envia uma notificação (Webhook) para o computador da sua loja física. O estoque é reduzido automaticamente. Se for entrega, gera a etiqueta de envio. Se for agendamento, o mecânico já sabe qual peça separar para aquele dia.
+
+
+---
+
+## O que você precisa construir (Tecnicamente)
+
+Para não misturar as coisas, você criará um novo microsserviço no seu Docker chamado `motor_ecommerce`. Ele precisará lidar com três integrações fundamentais:
+
+### 1. Gestão de Estoque Unificado
+
+O maior pesadelo de uma loja física que vende online é vender uma peça no site que acabou de ser vendida no balcão físico há 5 minutos.
+
+* **A Solução:** O seu banco de dados PostgreSQL será a "fonte da verdade". O caixa da loja física e o aplicativo do cliente devem ler a mesma tabela de `Estoque`. Quando a quantidade chegar a zero, o app oculta o botão de comprar na mesma hora.
+
+### 2. A API de Pagamento
+
+Você não programa um sistema para processar cartões do zero. Você integra o **Mercado Pago** via API.
+
+* No Python, você envia um pacote JSON com o valor da peça. O Mercado Pago te devolve um "Link de Checkout" ou o código copia e cola do Pix. Quando o cliente paga, o Mercado Pago avisa o seu servidor silenciosamente no fundo (via Webhook): *"O Pedido #1024 foi pago, pode liberar a peça"*.
+
+### 3. A API de Logística
+
+Se o cliente quiser receber em casa, você precisa calcular o frete baseado no peso da peça e no CEP.
+
+* **A Solução:** Integração com APIs como **MelhorEnvio** ou **Frenet**. Você manda o CEP e o peso (ex: 2kg) e eles devolvem os preços de Jadlog, Correios e Azul Cargo. O cliente escolhe, paga, e você só imprime a etiqueta na loja.
+
+## O Impacto na "Manutenção da Loja"
+
+Quando você permite o agendamento de serviços online ("Compre a peça e agende a troca"), a operação da sua loja física muda de patamar:
+
+1. **Previsibilidade:** O gerente da loja sabe exatamente quais carros vão entrar amanhã e quais peças já estão pagas.
+2. **Caixa Adiantado:** Você recebe o dinheiro das peças antes mesmo do cliente pisar na loja.
+3. **Fim do estoque encalhado:** Se uma peça está parada na prateleira da loja física, o seu Motor de Cálculo pode oferecer um desconto dinâmico no aplicativo para quem tem aquele carro, girando o estoque rápido.
+
+Para hospedar uma arquitetura de microsserviços baseada em Docker (API, banco de dados, filas e motores paralelos), você tem caminhos que variam radicalmente em preço e complexidade.
+
+Como você pediu a combinação ideal entre **baixo custo inicial e capacidade de escalar**, aqui está a realidade do mercado e como as empresas fazem essa transição.
+
+## 1. DigitalOcean: O Melhor Custo-Benefício para o Lançamento
+
+Se você quer colocar o DriveTax-Motors no ar esta semana sem precisar de um diploma em engenharia de infraestrutura, a DigitalOcean é a escolha número um. O preço é previsível e a interface é feita para desenvolvedores.
+
+* **Como funciona:** Você aluga um "Droplet" (uma máquina virtual Linux). Você entra nela, instala o Docker, clona seu repositório do GitHub e roda o `docker-compose up -d`. Simples assim.
+* **O Custo (MVP):** Um Droplet com 4GB de RAM e 2 vCPUs custa em torno de **US$ 24 por mês**. Essa máquina aguenta rodar todo o seu sistema tranquilamente para os primeiros milhares de acessos.
+* **A Escalabilidade:** Quando os acessos subirem, você pode fazer um "Resize" na máquina com um clique (aumentando para 8GB ou 16GB de RAM). Quando ficar gigante, você assina o **Managed Database** deles para tirar o PostgreSQL de dentro da sua máquina e colocá-lo em um servidor dedicado.
+
+## 2. AWS (Amazon Web Services): O Padrão Ouro da Escala (Com Ressalvas)
+
+A AWS é onde o seu sistema vai morar quando o DriveTax-Motors for uma empresa milionária, mas entrar nela logo no Dia 1 pode ser uma armadilha financeira se você não souber configurar.
+
+* **Como funciona:** Em vez de rodar um `docker-compose` simples, na AWS você usa o **ECS (Elastic Container Service) com Fargate**. O Fargate é "Serverless" (sem servidor). Você diz para a AWS: *"Aqui está o meu contêiner da Calculadora. Se a fila do RabbitMQ passar de 1.000 mensagens, crie 50 cópias desse contêiner. Quando a fila esvaziar, destrua 49 e deixe só um"*. Você paga apenas pelos segundos em que as 50 calculadoras estiveram ligadas.
+* **O Custo:** A AWS tem o **Free Tier** (Nível Gratuito) por um ano, o que te permite rodar uma máquina EC2 (t2.micro) e um banco RDS pequeno de graça. Porém, se os robôs consumirem muito processamento e você estourar a cota gratuita, a conta pode saltar rapidamente para mais de US$ 100/mês.
+* **A Escalabilidade:** É infinita. A Netflix, o iFood e a Uber rodam em arquiteturas muito parecidas com essa na AWS.
+
+## 3. Hetzner: O Segredo de Baixo Custo dos Hackers
+
+Se você está bancando o projeto do próprio bolso e o dólar é um problema, a **Hetzner** (empresa alemã) é hoje a queridinha dos desenvolvedores independentes.
+
+* Eles não têm a interface bonita da DigitalOcean ou os serviços gerenciados avançados da AWS, mas oferecem **força bruta pelo menor preço do mercado**.
+* Você consegue um servidor com processador ARM (os mesmos da Apple), 4 vCPUs e 8GB de RAM por cerca de **US$ 7 a US$ 10 por mês**. É imbatível para rodar Docker pesado.
+
+---
+
+## Comparativo Direto
+
+| Provedor | Foco Principal | Custo Mensal (Base) | Curva de Aprendizado |
+| --- | --- | --- | --- |
+| **DigitalOcean** | Equilíbrio (Fácil e justo) | ~ US$ 20 a 24 | Baixa (Ideal para Docker Compose) |
+| **Hetzner Cloud** | Preço esmagador | ~ US$ 7 a 10 | Média (Você gerencia tudo) |
+| **AWS** | Escala infinita e automação | US$ 0 (1º ano) -> US$ 100+ | Alta (Exige estudo em Cloud) |
+
+> **O Conselho de Arquitetura:** Comece com a **DigitalOcean (ou Hetzner)**. Suba tudo em um único servidor usando o `docker-compose` que criamos. Valide o produto com clientes reais. Quando os bots começarem a estrangular a máquina de cálculos, aí sim você migra a arquitetura para a AWS e separa o banco de dados dos servidores de processamento.
+
+Para integrar o e-commerce ao sistema existente sem quebrar a integridade das peças, estoque e agendamentos na oficina, a modelagem no PostgreSQL precisa resolver três desafios principais:
+
+1. **Snapshots de Preço:** O preço de uma peça muda no cadastro, mas o pedido passado deve manter o valor exatamente como foi pago.
+2. **Concorrência de Estoque:** Impedir que duas pessoas comprem a mesma peça ao mesmo tempo online ou no balcão físico.
+3. **Modelagem Híbrida (Produto + Serviço):** Permitir que um pedido contenha produtos físicos (entrega/retirada) e serviços (agendamento no box da oficina).
+
+---
+
+## O Modelo de Dados Relacional (MER)
+
+O esquema relacional é estruturado em quatro blocos centrais:
+
+```
+[ USUÁRIOS / CLIENTES ]
+         │
+         ├───< [ CARRINHO_ITENS ] >─── [ PRODUTOS / ESTOQUE ]
+         │                                   │
+         └───< [ PEDIDOS ] >─────────────────┤
+                    │                        │
+                    ├───< [ PEDIDO_ITENS ] >─┘
+                    │
+                    ├───1:1─── [ PAGAMENTOS ]
+                    │
+                    └───1:1─── [ AGENDAMENTOS_SERVICO ]
+
+```
+
+---
+
+## Esquema SQL (PostgreSQL)
+
+### 1. Produtos e Estoque Unificado
+
+A tabela de produtos centraliza os dados. O campo `quantidade_estoque` é a "fonte da verdade" compartilhada entre a loja física e a loja online.
+
+```sql
+CREATE TABLE produtos (
+    id SERIAL PRIMARY KEY,
+    sku VARCHAR(50) UNIQUE NOT NULL,       -- Código interno da peça (ex: FILTRO-ALT-01)
+    nome VARCHAR(150) NOT NULL,
+    descricao TEXT,
+    preco DECIMAL(10, 2) NOT NULL,
+    quantidade_estoque INT NOT NULL DEFAULT 0,
+    peso_gramas INT NOT NULL DEFAULT 0,    -- Usado pela API de frete (MelhorEnvio)
+    ativo BOOLEAN DEFAULT TRUE,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+```
+
+### 2. Carrinho de Compras (Estado Temporário)
+
+O carrinho não armazena o histórico financeiro — ele guarda apenas o que o usuário deseja comprar no momento. Quando o pedido é finalizado, os itens do carrinho são convertidos em itens do pedido e removidos daqui.
+
+```sql
+CREATE TABLE carrinho_itens (
+    id SERIAL PRIMARY KEY,
+    usuario_id INT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    produto_id INT NOT NULL REFERENCES produtos(id),
+    quantidade INT NOT NULL CHECK (quantidade > 0),
+    adicionado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_usuario_produto UNIQUE (usuario_id, produto_id)
+);
+
+```
+
+### 3. Pedidos e Itens do Pedido
+
+Aqui ocorre a separação entre a **cabeça do pedido** (dados do comprador, valores totais e tipo de entrega) e os **itens** (com snapshot do preço unitário gravado no instante da compra).
+
+```sql
+CREATE TYPE tipo_entrega_enum AS ENUM ('ENTREGA_CASA', 'RETIRADA_LOJA', 'INSTALACAO_OFICINA');
+CREATE TYPE status_pedido_enum AS ENUM ('AGUARDANDO_PAGAMENTO', 'PAGO', 'EM_PREPARACAO', 'ENVIADO', 'CONCLUIDO', 'CANCELADO');
+
+CREATE TABLE pedidos (
+    id SERIAL PRIMARY KEY,
+    usuario_id INT NOT NULL REFERENCES usuarios(id),
+    status status_pedido_enum DEFAULT 'AGUARDANDO_PAGAMENTO',
+    tipo_entrega tipo_entrega_enum NOT NULL,
+    valor_subtotal DECIMAL(10, 2) NOT NULL,
+    valor_frete DECIMAL(10, 2) DEFAULT 0.00,
+    valor_total DECIMAL(10, 2) NOT NULL,
+    
+    -- Dados de Entrega (se aplicável)
+    endereco_cep VARCHAR(9),
+    endereco_logradouro VARCHAR(255),
+    endereco_numero VARCHAR(20),
+    
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE pedido_itens (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+    produto_id INT NOT NULL REFERENCES produtos(id),
+    quantidade INT NOT NULL CHECK (quantidade > 0),
+    preco_unitario DECIMAL(10, 2) NOT NULL -- SNAPSHOT: valor cobrado no momento da compra
+);
+
+```
+
+### 4. Pagamentos (Integração Gateway)
+
+Os detalhes técnicos das transações (Mercado Pago, Stripe ou Pagar.me) ficam desacoplados da tabela de pedidos para permitir que um pedido tenha re-tentativas de pagamento sem corromper seus dados.
+
+```sql
+CREATE TYPE status_pagamento_enum AS ENUM ('PENDENTE', 'APROVADO', 'RECUSADO', 'ESTORNADO');
+CREATE TYPE meiopagamento_enum AS ENUM ('PIX', 'CARTAO_CREDITO', 'BOLETO');
+
+CREATE TABLE pagamentos (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT UNIQUE NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+    gateway VARCHAR(50) NOT NULL,            -- ex: 'MERCADOPAGO'
+    transacao_external_id VARCHAR(100),       -- ID da transação retornado pela API
+    meio_pagamento meiopagamento_enum NOT NULL,
+    status status_pagamento_enum DEFAULT 'PENDENTE',
+    valor_pago DECIMAL(10, 2) NOT NULL,
+    qr_code_pix TEXT,                        -- String "copia e cola" do Pix (se aplicável)
+    pago_em TIMESTAMP,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+```
+
+### 5. Agendamento na Oficina (Manutenção Integrada)
+
+Quando a entrega for do tipo `INSTALACAO_OFICINA`, esta tabela reserva um horário no box de serviço da loja física.
+
+```sql
+CREATE TABLE agendamentos_servico (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT UNIQUE NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+    veiculo_id INT NOT NULL REFERENCES veiculos(id), -- Vinculado ao veículo do usuário
+    data_agendada DATE NOT NULL,
+    horario_agendado TIME NOT NULL,
+    observacoes TEXT,
+    concluido BOOLEAN DEFAULT FALSE
+);
+
+```
+
+---
+
+## Regra de Ouro: Controle Transacional de Estoque
+
+Para prevenir a venda de um produto sem estoque suficiente quando dois clientes tentam comprar a mesma peça simultaneamente, a baixa no estoque deve ser tratada no banco de dados usando **Lock Otimista** ou transações com travamento de linha (`FOR UPDATE`):
+
+```sql
+-- Exemplo de transação no PostgreSQL ao confirmar o checkout:
+BEGIN;
+
+-- 1. Trava a linha do produto e valida a quantidade
+SELECT quantidade_estoque 
+FROM produtos 
+WHERE id = 42 
+FOR UPDATE;
+
+-- 2. Atualiza o estoque de forma atômica
+UPDATE produtos 
+SET quantidade_estoque = quantidade_estoque - 1 
+WHERE id = 42 AND quantidade_estoque >= 1;
+
+-- 3. Atualiza o status do pagamento
+UPDATE pagamentos 
+SET status = 'APROVADO', pago_em = NOW() 
+WHERE pedido_id = 1024;
+
+COMMIT;
+
+```
+
+---
+
+## Principais Recursos desta Modelagem
+
+1. **Rastreabilidade total:** Caso o valor de um "Filtro de Óleo" mude de R$ 35,00 para R$ 45,00 na tabela `produtos`, o histórico da tabela `pedido_itens` preserva o valor de R$ 35,00 cobrado na época da transação.
+2. **Ciclo de vida do Pix:** Quando um pagamento por Pix é gerado, o campo `qr_code_pix` armazena a string necessária para o aplicativo exibir o código na tela. Assim que o webhook do Mercado Pago notifica o servidor, a tabela `pagamentos` atualiza o status para `APROVADO`.
+3. **Escala simplificada:** A estrutura permite adicionar múltiplos estoques (filiais) no futuro criando uma tabela intermediária `estoque_lojas(produto_id, loja_id, quantidade)`, mantendo as tabelas de pedidos e pagamentos intactas.
+
+DRIVETAX-MOTORS // DATABASE ARCHITECTURE
+Trigger de Abate Automático de Estoque
+Automação transacional no PostgreSQL garantindo consistência entre Pagamentos e Produtos
+
+Para garantir a integridade dos dados e evitar concorrência (vender peças sem estoque), a melhor abordagem é
+delegar o abate de estoque diretamente ao motor do banco de dados PostgreSQL por meio de uma Function e
+uma Trigger acionada na mudança de status do pagamento.
+1. A Função da Trigger (PL/pgSQL)
+Esta função é executada sempre que a tabela pagamentos sofre uma atualização. Ela verifica se o status
+transicionou para 'APROVADO' e percorre todos os itens do pedido associado reduzindo o estoque de forma
+atômica.
+CREATE OR REPLACE FUNCTION fn_abater_estoque_apos_pagamento()
+RETURNS TRIGGER AS $$
+DECLARE
+item RECORD;
+BEGIN
+-- Executa apenas quando o status muda para 'APROVADO' (evita execução duplicada)
+IF (NEW.status = 'APROVADO' AND (OLD.status IS NULL OR OLD.status <> 'APROVADO')) THEN
+-- Percorre todos os produtos vinculados ao pedido pago
+FOR item IN
+SELECT produto_id, quantidade
+FROM pedido_itens
+WHERE pedido_id = NEW.pedido_id
+LOOP
+-- Tenta atualizar o estoque garantindo que haja quantidade disponível
+UPDATE produtos
+SET quantidade_estoque = quantidade_estoque - item.quantidade
+WHERE id = item.produto_id
+AND quantidade_estoque >= item.quantidade;
+-- Se nenhuma linha for afetada, o estoque era insuficiente
+IF NOT FOUND THEN
+RAISE EXCEPTION 'Estoque insuficiente para o produto ID % no Pedido %',
+
+item.produto_id, NEW.pedido_id;
+
+END IF;
+END LOOP;
+-- Atualiza também o status do pedido para 'EM_PREPARACAO'
+UPDATE pedidos
+SET status = 'EM_PREPARACAO', atualizado_em = NOW()
+WHERE id = NEW.pedido_id;
+END IF;
+RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+2. A Criação da Trigger
+A trigger liga a função criada acima aos eventos da tabela pagamentos. Ela é executada AFTER UPDATE para
+cada linha alterada.
+DROP TRIGGER IF EXISTS trg_abater_estoque ON pagamentos;
+CREATE TRIGGER trg_abater_estoque
+AFTER UPDATE ON pagamentos
+FOR EACH ROW
+EXECUTE FUNCTION fn_abater_estoque_apos_pagamento();
+
+Segurança contra Race Conditions e Rollback Total
+Se qualquer produto do pedido não tiver estoque suficiente no exato momento da aprovação do pagamento, o PostgreSQL
+dispara um RAISE EXCEPTION. Isso aborta a transação inteira e faz o rollback autômato — o status do pagamento não
+muda para APROVADO no banco de dados e nenhum produto tem seu estoque alterado.
+3. Cenário de Teste / Validação
+Você pode testar o comportamento da automação executando a seguinte simulação no seu cliente SQL:
+-- Simula o webhook do Mercado Pago atualizando o pagamento para APROVADO
+UPDATE pagamentos
+SET status = 'APROVADO', pago_em = NOW()
+WHERE pedido_id = 1024;
+
+Vantagens Arquiteturais
+Consistência ACID: A lógica é transacional. Não há risco da sua aplicação Python falhar no meio do processo
+e deixar o estoque inconsistente.
+Desacoplamento: O microsserviço de Webhooks/Pagamentos só precisa atualizar uma linha no banco de
+dados. O controle de estoque acontece de forma transparente no SGBD.
+Sincronização com Loja Física: Se o sistema PDV da loja física estiver conectado ao mesmo PostgreSQL, a
+peça fica indisponível para venda presencial no milissegundo em que o Pix é aprovado.
+
+DriveTax-Motors Architecture Documentation • PostgreSQL Automatic Stock Abatement
+
