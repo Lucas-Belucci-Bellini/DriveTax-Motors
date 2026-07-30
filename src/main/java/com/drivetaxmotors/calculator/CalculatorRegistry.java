@@ -119,6 +119,8 @@ public class CalculatorRegistry {
                 new BaseCalculator111(),
                 new BaseCalculator112(),
                 new BaseCalculator113(),
+                new BaseCalculator114(),
+                new BaseCalculator115(),
                 new BaseCalculator116(),
                 new BaseCalculator117(),
                 new BaseCalculator118(),
