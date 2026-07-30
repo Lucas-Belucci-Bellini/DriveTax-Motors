@@ -1,0 +1,25 @@
+{
+  "modelo": "VW Polo Highline 2024",
+  "aquisicao": {
+    "preco_tabela": 120000.0,
+    "preco_real_fabrica": 95135.14,
+    "impostos": {
+      "valor_ipi": 10464.86,
+      "valor_icms": 12672.0,
+      "total_impostos": 23136.86
+    }
+  },
+  "pos_venda": {
+    "projecao_anos": 3,
+    "km_total_projetado": 45000,
+    "gastos": {
+      "total_revisoes": 3440.0,
+      "total_pecas": 3660.0,
+      "custo_manutencao_total": 7100.0
+    },
+    "indicadores": {
+      "custo_manutencao_por_km": 0.158
+    }
+  },
+  "custo_real_3_anos": 127100.0
+}
