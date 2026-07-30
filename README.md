@@ -385,3 +385,49 @@ Para construir um Motor de Ingestão de nível comercial para o DriveTax-Motors,
 1. **Rotação de Proxies:** Usar serviços de proxy para que cada acesso pareça vir de um computador diferente (e de um estado diferente do Brasil).
 2. **Randomização de Tempo:** Nunca clique ou mude de página exatamente no mesmo milissegundo. Adicione `await page.wait_for_timeout(2000)` (pausas aleatórias de 2 a 5 segundos) entre as ações.
 3. **Agendamento Inteligente (Cron Jobs):** Preços de peças e revisões não mudam a cada hora. Mude a frequência dos seus bots para raspar os dados apenas uma vez por semana, de madrugada (quando os sites têm menos tráfego real).
+
+Para um sistema que recebe milhares de atualizações de bots diariamente (escrita) e precisa alimentar calculadoras financeiras em tempo real (leitura), você não pode usar apenas um tipo de banco de dados.
+
+A arquitetura padrão da indústria para esse cenário é o modelo **Híbrido (Relacional + Cache)**.
+
+## A Escolha das Tecnologias
+
+1. **PostgreSQL (Banco Principal/Relacional):** É a espinha dorsal. Ele é perfeito para garantir que os dados financeiros estejam corretos (sem dados duplicados ou órfãos). Além disso, o PostgreSQL possui um campo nativo chamado `JSONB`, que permite salvar os dados "sujos" dos bots antes da limpeza.
+2. **Redis (Banco em Memória/Cache):** É o segredo para o sistema não ficar lento. Ele não salva dados no disco rígido, mas sim na memória RAM. Quando o cliente final acessa a plataforma, a API busca os preços no Redis em milissegundos, sem encostar no PostgreSQL.
+
+---
+
+## Como Modelar o Banco de Dados (Esquema)
+
+Seus dados precisam ser separados em "entidades" lógicas. Se você colocar tudo em uma tabela só, a busca por uma peça de desgaste vai varrer milhões de linhas desnecessariamente.
+
+Aqui está o mapa relacional (ER) projetado para o DriveTax-Motors:
+
+> **Ponto Crítico:** Note a coluna `Data_Captura` na tabela de preços. Você nunca apaga um preço antigo. Você insere um novo e marca o mais recente como `ativo`. Isso permite que você mostre gráficos de flutuação de preço do carro ao longo dos meses.
+
+---
+
+## Táticas para Evitar Lentidão (Performance)
+
+O banco de dados pode ser o melhor do mundo, mas se o código não conversar bem com ele, o sistema vai engasgar. Siga estas 3 regras no seu backend:
+
+### 1. Inserção em Lote (Batch Insert)
+
+Os seus bots não devem abrir uma conexão com o banco a cada carro pesquisado. Isso derruba qualquer servidor.
+**O errado:** O bot acha 100 preços e manda `INSERT` 100 vezes.
+**O certo:** O bot junta os 100 preços em uma lista (JSON), manda para o Motor de Cálculo, e ele faz um único `INSERT` com os 100 registros de uma vez.
+
+### 2. Índices (Indexes) nas Buscas
+
+Se o seu usuário costuma buscar carros por "Marca" e "Modelo", você precisa avisar o PostgreSQL para criar um índice (um atalho) para essas colunas.
+No SQL, basta um comando simples:
+`CREATE INDEX idx_marca_modelo ON Veiculo (marca, modelo);`
+Isso transforma uma busca que demoraria 5 segundos em algo de 0.05 segundos.
+
+### 3. A Regra do Cache (O Papel do Redis)
+
+Quando o Motor de Auditoria (as 240 calculadoras que verificam os dados) aprova que a conta fechou, ele salva o resultado final (ex: Preço do Carro + TCO 3 Anos) no **Redis**.
+
+O Redis guarda essa informação com uma chave simples, tipo: `resultado:vw_polo_highline_2024`.
+Quando o cliente clicar no aplicativo para ver o carro, o sistema nem olha para o PostgreSQL — ele apenas "pesca" o JSON pronto no Redis instantaneamente.
+
