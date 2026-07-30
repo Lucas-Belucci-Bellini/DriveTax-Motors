@@ -83,7 +83,7 @@ public class CalculatorRegistry {
                 new VerifyCalculator17(),
                 new VerifyCalculator18(),
                 new VerifyCalculator19(),
-                new VerifyCalculator20(),
+                new VerifyCalculator20()
         );
     }
 }

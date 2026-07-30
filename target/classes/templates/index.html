@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DriveTax Motors</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="page-shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">DriveTax Motors</p>
+                <h1>Venda de carros com cálculo de impostos</h1>
+                <p class="lead">Escolha o tipo de cálculo e insira o valor base do veículo.</p>
+            </div>
+        </header>
+
+        <main class="content-card">
+            <form th:action="@{/calcular}" method="post" class="calculator-form">
+                <h2>Calculadora de impostos</h2>
+
+                <label for="calculatorId">Selecione o cálculo</label>
+                <select id="calculatorId" name="calculatorId" required>
+                    <option th:each="calculator : ${calculators}"
+                            th:value="${calculator.id}"
+                            th:text="${calculator.label}"></option>
+                </select>
+
+                <label for="valorBase">Valor base do veículo</label>
+                <input type="number" id="valorBase" name="valorBase" step="0.01" min="0" placeholder="0.00" required>
+
+                <p class="tax-note" th:if="${!showAdvanced}">
+                    Apenas cálculos básicos estão visíveis.
+                    <a th:href="@{/?showAdvanced=true}">Mostrar cálculos avançados</a>.
+                </p>
+                <p class="tax-note" th:if="${showAdvanced}">
+                    Cálculos avançados visíveis.
+                    <a th:href="@{/}">Ocultar avançados</a>.
+                </p>
+
+                <button type="submit">Calcular</button>
+            </form>
+        </main>
+    </div>
+</body>
+</html>
