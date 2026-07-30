@@ -156,3 +156,232 @@ motor_de_auditoria(resultado)
 ```
 
 Essa lógica resolve o núcleo do seu produto. Com esse esqueleto, você pode adicionar facilmente IPVA, custo do seguro e IPVA para formar o custo total de propriedade (TCO) que você quer entregar.
+
+https://github.com/Lucas-Belucci-Bellini/DriveTax-Motors.git a ideia é criar 960 calculadoras que cada uma vai calcular uma coisa 480 vão calcular dados que os boots pegaram e esses dados vão ser avaliados por 240 caluculadoras que vão verificar se a conta está certa e bater com os dados e verifficar se os dados estão certos feito isso as outras 240 calculadoras vão entregar todos os resulados de que o cliente pode quer ou não saber, desde o valor real do carro sem imposto até o custo de manutenção e cada preço de peça do carro 
+
+Para integrar o custo de manutenção e peças, nós precisamos dar um passo além do preço de compra e entrar no cálculo de **TCO (Total Cost of Ownership - Custo Total de Propriedade)**.
+
+No design de software do DriveTax-Motors, a regra de ouro é a **modularidade**. Você não deve colocar essa matemática dentro da mesma calculadora que remove impostos. Se fizermos isso, o código vira um "Frankenstein" difícil de manter.
+
+Em vez disso, criaremos uma segunda "calculadora" especializada em manutenção, e um **Agregador** que junta os resultados de ambas.
+
+## 1. O Formato dos Dados (O que os Bots precisam capturar)
+
+Antes de calcular, precisamos definir o "contrato de dados". Seus bots (Motor de Ingestão) precisarão varrer os sites das montadoras e catálogos de peças e entregar um pacote (JSON) estruturado assim:
+
+| Categoria | Estrutura de Dados (Exemplo) |
+| --- | --- |
+| **Revisões Programadas** | Lista com KM e Preço (ex: 10.000km = R$ 650, 20.000km = R$ 890). |
+| **Cesta de Peças (Desgaste)** | Lista de peças comuns, preço e quantidade estimada para 3 anos (ex: 4 pneus, 1 pastilha de freio). |
+
+---
+
+## 2. A Programação (Motor de Manutenção)
+
+Aqui está a modelagem da calculadora que processa esses dados. O grande diferencial comercial do seu sistema será mostrar ao cliente o **custo por quilômetro rodado**, projetando o gasto para um tempo médio de uso (ex: 3 anos rodando 15.000 km/ano).
+
+```python
+class CalculadoraManutencao:
+    def __init__(self, revisoes: list, pecas: list, km_por_ano: int = 15000, anos_uso: int = 3):
+        self.revisoes = revisoes
+        self.pecas = pecas
+        # Define até que quilometragem o carro será usado com esse dono
+        self.km_total_projetado = km_por_ano * anos_uso 
+
+    def projetar_custos(self) -> dict:
+        """
+        Calcula o custo de revisões, troca de peças de desgaste e o custo por KM.
+        """
+        # 1. Soma apenas as revisões que acontecem dentro da quilometragem projetada
+        custo_revisoes = sum(
+            rev["preco"] for rev in self.revisoes if rev["km"] <= self.km_total_projetado
+        )
+        
+        # 2. Soma o custo da cesta de peças de desgaste natural
+        custo_pecas = sum(
+            peca["preco"] * peca["quantidade"] for peca in self.pecas
+        )
+        
+        custo_total = custo_revisoes + custo_pecas
+        custo_por_km = custo_total / self.km_total_projetado
+
+        return {
+            "projecao_anos": 3,
+            "km_total_projetado": self.km_total_projetado,
+            "gastos": {
+                "total_revisoes": round(custo_revisoes, 2),
+                "total_pecas": round(custo_pecas, 2),
+                "custo_manutencao_total": round(custo_total, 2)
+            },
+            "indicadores": {
+                "custo_manutencao_por_km": round(custo_por_km, 3)
+            }
+        }
+
+# --- Simulando os dados extraídos pelos seus Bots ---
+dados_revisoes = [
+    {"km": 10000, "preco": 650.00},
+    {"km": 20000, "preco": 890.00},
+    {"km": 30000, "preco": 700.00},
+    {"km": 40000, "preco": 1200.00}, # Ex: Troca de correia dentada aos 40k
+    {"km": 50000, "preco": 650.00}
+]
+
+dados_pecas = [
+    {"item": "Pneu (jogo)", "preco": 2400.00, "quantidade": 1},
+    {"item": "Pastilha de freio", "preco": 450.00, "quantidade": 2},
+    {"item": "Palheta limpador", "preco": 120.00, "quantidade": 3}
+]
+
+# Rodando a calculadora
+calc_manutencao = CalculadoraManutencao(revisoes=dados_revisoes, pecas=dados_pecas)
+resultado_manutencao = calc_manutencao.projetar_custos()
+
+```
+
+---
+
+## 3. O Agregador (Unindo Tudo)
+
+Agora entra o conceito de **Pipeline**. Você tem a `CalculadoraDesoneracao` (que fizemos antes) e a `CalculadoraManutencao`. O sistema precisa de um maestro para reger as duas e entregar o resultado completo que as suas "últimas 240 calculadoras" (a API) vão exibir para o cliente.
+
+```python
+def gerar_raio_x_do_veiculo(dados_brutos: dict) -> dict:
+    # 1. Roda a primeira calculadora (Impostos)
+    calc_impostos = CalculadoraDesoneracao(
+        preco_final=dados_brutos["preco_tabela"], 
+        taxa_ipi_perc=dados_brutos["ipi"], 
+        taxa_icms_perc=dados_brutos["icms"]
+    )
+    resultado_preco = calc_impostos.extrair_preco_real()
+    
+    # 2. Roda a segunda calculadora (Manutenção)
+    calc_manutencao = CalculadoraManutencao(
+        revisoes=dados_brutos["revisoes"], 
+        pecas=dados_brutos["pecas"]
+    )
+    resultado_manutencao = calc_manutencao.projetar_custos()
+    
+    # 3. Empacota tudo para o Front-end
+    return {
+        "modelo": dados_brutos["modelo"],
+        "aquisicao": resultado_preco,
+        "pos_venda": resultado_manutencao,
+        # Aqui você pode cruzar os dados!
+        "custo_real_3_anos": round(resultado_preco["preco_tabela"] + resultado_manutencao["gastos"]["custo_manutencao_total"], 2)
+    }
+
+```
+
+Ao estruturar dessa forma, se você quiser criar uma nova calculadora amanhã (ex: `CalculadoraDepreciacao` ou `CalculadoraSeguro`), basta criar uma nova classe e plugar dentro do agregador. O sistema escala infinitamente sem quebrar.
+
+A construção desses bots (o seu Motor de Ingestão) é uma das partes mais desafiadoras e importantes do projeto. Sites de montadoras e catálogos de peças costumam ser dinâmicos: você precisa selecionar o modelo, o ano e a versão em menus (dropdowns) para que o site carregue a tabela de revisões.
+
+Por causa disso, bibliotecas simples como `requests` ou `BeautifulSoup` não vão funcionar bem, pois elas não executam o JavaScript da página. Para o DriveTax-Motors, a ferramenta definitiva em Python hoje é o **Playwright**.
+
+Ele abre um navegador real (ou invisível), clica nos menus como um humano faria, espera a tabela carregar e extrai os dados.
+
+Aqui está o fluxo visual de como esse bot vai operar dentro da sua arquitetura:
+
+---
+
+## Como programar o seu primeiro Bot com Playwright
+
+Primeiro, você precisará instalar a biblioteca e os navegadores rodando estes comandos no seu terminal:
+
+```bash
+pip install playwright
+playwright install
+
+```
+
+Abaixo está o modelo de um bot projetado para entrar em um site de montadora, interagir com a página e extrair uma tabela de revisões.
+
+```python
+import asyncio
+from playwright.async_api import async_playwright
+import json
+
+async def raspar_revisoes_carro(url: str, modelo: str):
+    # Inicia o Playwright
+    async with async_playwright() as p:
+        # Abre o navegador (headless=False permite ver o bot trabalhando)
+        browser = await p.chromium.launch(headless=False)
+        page = await browser.new_page()
+
+        print(f"[{modelo}] Acessando site...")
+        await page.goto(url)
+
+        # 1. Simula a interação humana (Exemplo: selecionando o carro num menu)
+        # O bot procura um elemento na tela (ex: um botão escrito "Selecione o Modelo")
+        # e clica nele.
+        try:
+            await page.click("button#selecionar-modelo")
+            await page.select_option("select#dropdown-carros", value=modelo)
+            await page.click("button#buscar-revisoes")
+            
+            # 2. Espera a tabela aparecer na tela para não extrair HTML vazio
+            await page.wait_for_selector("table.tabela-revisoes")
+        except Exception as e:
+            print(f"Erro ao navegar na página: {e}")
+            await browser.close()
+            return None
+
+        # 3. Extrai os dados
+        # Vamos varrer todas as linhas (tr) dentro da tabela
+        linhas = await page.locator("table.tabela-revisoes tbody tr").all()
+        
+        dados_revisoes = []
+        
+        for linha in linhas:
+            # Pega o texto da coluna de KM e da coluna de Preço
+            colunas = await linha.locator("td").all_inner_texts()
+            
+            if len(colunas) >= 2:
+                km_texto = colunas[0].strip() # Ex: "10.000 km"
+                preco_texto = colunas[1].strip() # Ex: "R$ 650,00"
+                
+                # Limpa os textos para virarem números (Int e Float)
+                km_limpo = int(''.join(filter(str.isdigit, km_texto)))
+                preco_limpo = float(preco_texto.replace("R$", "").replace(".", "").replace(",", ".").strip())
+                
+                dados_revisoes.append({
+                    "km": km_limpo,
+                    "preco": preco_limpo
+                })
+
+        print(f"[{modelo}] Extração concluída com sucesso!")
+        await browser.close()
+        
+        # 4. Formata o pacote de dados final
+        return {
+            "modelo": modelo,
+            "origem": url,
+            "revisoes": dados_revisoes
+        }
+
+# --- Executando o Bot ---
+async def main():
+    # URL fictícia para o exemplo
+    url_montadora = "https://www.site-da-montadora-exemplo.com.br/revisoes"
+    
+    dados = await raspar_revisoes_carro(url_montadora, "modelo_xyz")
+    
+    # Imprime o JSON pronto para ser enviado para a Calculadora
+    print(json.dumps(dados, indent=4, ensure_ascii=False))
+
+# Roda a função principal
+if __name__ == "__main__":
+    asyncio.run(main())
+
+```
+
+### O Segredo para não ser bloqueado
+
+Se você colocar esse script para rodar mil vezes seguidas, os sites das montadoras vão identificar que é um robô e bloquear o seu IP (o famoso Erro 403 ou testes de Captcha).
+
+Para construir um Motor de Ingestão de nível comercial para o DriveTax-Motors, você deve implementar três defesas no seu bot:
+
+1. **Rotação de Proxies:** Usar serviços de proxy para que cada acesso pareça vir de um computador diferente (e de um estado diferente do Brasil).
+2. **Randomização de Tempo:** Nunca clique ou mude de página exatamente no mesmo milissegundo. Adicione `await page.wait_for_timeout(2000)` (pausas aleatórias de 2 a 5 segundos) entre as ações.
+3. **Agendamento Inteligente (Cron Jobs):** Preços de peças e revisões não mudam a cada hora. Mude a frequência dos seus bots para raspar os dados apenas uma vez por semana, de madrugada (quando os sites têm menos tráfego real).

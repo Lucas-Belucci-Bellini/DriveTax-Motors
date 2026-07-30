@@ -1,0 +1,15 @@
+package com.drivetaxmotors.calculator;
+
+import java.math.BigDecimal;
+
+/**
+ * Stage ANALYSIS calculator number 132. This calculator computes a unique analysis metric.
+ * Generated calculator class for the drive-tax pipeline.
+ * Each class implements a distinct calculation stage and returns
+ * a result based on a fixed rate and stage semantics.
+ */
+public class AnalysisCalculator132 extends AbstractAnalysisCalculator {
+    public AnalysisCalculator132() {
+        super("analysis-metric-132", "Analysis Metric 132", BigDecimal.valueOf(4.2300), true);
+    }
+}
