@@ -245,7 +245,7 @@ public class CalculatorRegistry {
                 new VerifyCalculator67(),
                 new VerifyCalculator68(),
                 new VerifyCalculator69(),
-                new VerifyCalculator70(),
+                new VerifyCalculator70()
         );
     }
 }
