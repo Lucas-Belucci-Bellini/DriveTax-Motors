@@ -12,16 +12,33 @@
             <div>
                 <p class="eyebrow">DriveTax Motors</p>
                 <h1>Venda de carros com cálculo de impostos</h1>
-                <p class="lead">Insira o valor base do veículo e veja quanto pagará de imposto e o total final.</p>
+                <p class="lead">Escolha o tipo de cálculo e insira o valor base do veículo.</p>
             </div>
         </header>
 
         <main class="content-card">
             <form th:action="@{/calcular}" method="post" class="calculator-form">
                 <h2>Calculadora de impostos</h2>
+
+                <label for="calculatorId">Selecione o cálculo</label>
+                <select id="calculatorId" name="calculatorId" required>
+                    <option th:each="calculator : ${calculators}"
+                            th:value="${calculator.id}"
+                            th:text="${calculator.label}"></option>
+                </select>
+
                 <label for="valorBase">Valor base do veículo</label>
                 <input type="number" id="valorBase" name="valorBase" step="0.01" min="0" placeholder="0.00" required>
-                <p class="tax-note">Taxa fixa de imposto aplicada: 25%</p>
+
+                <p class="tax-note" th:if="${!showAdvanced}">
+                    Apenas cálculos básicos estão visíveis.
+                    <a th:href="@{/?showAdvanced=true}">Mostrar cálculos avançados</a>.
+                </p>
+                <p class="tax-note" th:if="${showAdvanced}">
+                    Cálculos avançados visíveis.
+                    <a th:href="@{/}">Ocultar avançados</a>.
+                </p>
+
                 <button type="submit">Calcular</button>
             </form>
         </main>

@@ -1,5 +1,7 @@
 package com.drivetaxmotors.controller;
 
+import com.drivetaxmotors.model.CalculationResult;
+import com.drivetaxmotors.service.CarCalculatorService;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,24 +13,28 @@ import java.math.RoundingMode;
 
 @Controller
 public class VendaCarroController {
-    private static final BigDecimal TAX_RATE = BigDecimal.valueOf(25);
+    private final CarCalculatorService calculatorService;
+
+    public VendaCarroController(CarCalculatorService calculatorService) {
+        this.calculatorService = calculatorService;
+    }
 
     @GetMapping("/")
-    public String index() {
+    public String index(@RequestParam(value = "showAdvanced", required = false, defaultValue = "false") boolean showAdvanced,
+                        Model model) {
+        model.addAttribute("calculators", calculatorService.getCalculatorDefinitions(showAdvanced));
+        model.addAttribute("showAdvanced", showAdvanced);
         return "index";
     }
 
     @PostMapping("/calcular")
-    public String calcular(@RequestParam(name = "valorBase", required = false, defaultValue = "0") String valorBaseParam,
+    public String calcular(@RequestParam("calculatorId") String calculatorId,
+                          @RequestParam(name = "valorBase", required = false, defaultValue = "0") String valorBaseParam,
                           Model model) {
         BigDecimal valorBase = parseDecimal(valorBaseParam);
-        BigDecimal imposto = valorBase.multiply(TAX_RATE).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal total = valorBase.add(imposto);
+        CalculationResult result = calculatorService.calculate(calculatorId, valorBase);
 
-        model.addAttribute("valorBase", format(valorBase));
-        model.addAttribute("imposto", format(imposto));
-        model.addAttribute("total", format(total));
-        model.addAttribute("taxRate", TAX_RATE.toPlainString());
+        model.addAttribute("result", result);
         return "resultado";
     }
 
@@ -41,9 +47,5 @@ public class VendaCarroController {
         } catch (NumberFormatException e) {
             return BigDecimal.ZERO;
         }
-    }
-
-    private String format(BigDecimal value) {
-        return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 }

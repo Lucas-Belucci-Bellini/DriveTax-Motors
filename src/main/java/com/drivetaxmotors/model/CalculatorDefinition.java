@@ -7,12 +7,14 @@ public class CalculatorDefinition {
     private final String label;
     private final BigDecimal rate;
     private final boolean advanced;
+    private final CalculatorStage stage;
 
-    public CalculatorDefinition(String id, String label, BigDecimal rate, boolean advanced) {
+    public CalculatorDefinition(String id, String label, BigDecimal rate, boolean advanced, CalculatorStage stage) {
         this.id = id;
         this.label = label;
         this.rate = rate;
         this.advanced = advanced;
+        this.stage = stage;
     }
 
     public String getId() {
@@ -29,5 +31,9 @@ public class CalculatorDefinition {
 
     public boolean isAdvanced() {
         return advanced;
+    }
+
+    public CalculatorStage getStage() {
+        return stage;
     }
 }
